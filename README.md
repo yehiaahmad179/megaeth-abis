@@ -23,3 +23,14 @@ Repository containing verified contract ABIs for MegaExplorer.
 ## Verification Requirements
 - ABIs must match deployed bytecode
 - Contract names must exactly match deployed names
+---
+
+## Contributor: gttte
+
+This update adds a verified ABI entry for a new test contract to the MegaETH Testnet ABI repository.
+All ABIs follow the official verification format and are compatible with MegaExplorer validation tools.
+
+- Verified ABI source: local Remix compilation
+- Verification type: Manual validation and formatting check
+- Status: Ready for merge
+
