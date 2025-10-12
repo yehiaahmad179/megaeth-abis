@@ -1,0 +1,247 @@
+name: Validate ABIs
+
+on:
+  pull_request:
+    paths:
+      - 'contracts/**'
+      - 'contract-index.json'
+      - '.github/workflows/validate-abis.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Validate contract files structure
+      run: |
+        echo "🔍 Validating contract files structure..."
+        
+        # Check if contracts directory exists
+        if [ ! -d "contracts" ]; then
+          echo "❌ contracts/ directory not found"
+          exit 1
+        fi
+        
+        # Check if abis.json exists
+        if [ ! -f "abis.json" ]; then
+          echo "❌ abis.json not found"
+          exit 1
+        fi
+        
+        # Validate abis.json format
+        echo "📋 Validating abis.json format..."
+        node -e "
+          const fs = require('fs');
+          try {
+            const abis = JSON.parse(fs.readFileSync('abis.json', 'utf8'));
+            if (typeof abis !== 'object' || Array.isArray(abis)) {
+              console.error('❌ abis.json must be an object');
+              process.exit(1);
+            }
+            console.log('✅ abis.json format is valid');
+            console.log('📊 Found', Object.keys(abis).length, 'contracts in abis.json');
+          } catch (error) {
+            console.error('❌ abis.json is not valid JSON:', error.message);
+            process.exit(1);
+          }
+        "
+        
+        # Validate each contract file
+        echo "📄 Validating individual contract files..."
+        node -e "
+          const fs = require('fs');
+          const path = require('path');
+          
+          const abis = JSON.parse(fs.readFileSync('abis.json', 'utf8'));
+          const contractsDir = 'contracts';
+          
+          // Get all JSON files in contracts directory
+          const contractFiles = fs.readdirSync(contractsDir).filter(file => file.endsWith('.json'));
+          
+          console.log('📁 Found', contractFiles.length, 'contract files');
+          
+          let validFiles = 0;
+          let errors = [];
+          
+          contractFiles.forEach(file => {
+            const filePath = path.join(contractsDir, file);
+            try {
+              const contractData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+              
+              // Validate required fields
+              if (!contractData.name) {
+                errors.push(\`❌ \${file}: missing 'name' field\`);
+                return;
+              }
+              
+              if (!contractData.abi || !Array.isArray(contractData.abi)) {
+                errors.push(\`❌ \${file}: missing or invalid 'abi' field\`);
+                return;
+              }
+              
+              // Validate ABI structure
+              const validTypes = ['function', 'event', 'error', 'constructor', 'fallback', 'receive'];
+              const invalidAbiItems = contractData.abi.filter(item => 
+                !item.type || !validTypes.includes(item.type)
+              );
+              
+              if (invalidAbiItems.length > 0) {
+                errors.push(\`❌ \${file}: contains invalid ABI items\`);
+                return;
+              }
+              
+              validFiles++;
+              console.log(\`✅ \${file}: \${contractData.name} (\${contractData.abi.length} ABI items)\`);
+              
+            } catch (error) {
+              errors.push(\`❌ \${file}: invalid JSON - \${error.message}\`);
+            }
+          });
+          
+          if (errors.length > 0) {
+            console.error('\\n🚨 Validation errors:');
+            errors.forEach(error => console.error(error));
+            process.exit(1);
+          }
+          
+          console.log('\\n✅ All contract files are valid!');
+          console.log('📊 Summary:');
+          console.log('  - Valid contract files:', validFiles);
+          console.log('  - Total ABI items:', contractFiles.reduce((total, file) => {
+            const data = JSON.parse(fs.readFileSync(path.join(contractsDir, file), 'utf8'));
+            return total + data.abi.length;
+          }, 0));
+        "
+        
+    - name: Validate abis.json consistency
+      run: |
+        echo "🔗 Validating abis.json consistency..."
+        node -e "
+          const fs = require('fs');
+          const path = require('path');
+          
+          const abis = JSON.parse(fs.readFileSync('abis.json', 'utf8'));
+          const contractsDir = 'contracts';
+          
+          // Check if all contracts in abis.json have corresponding files
+          const contractFiles = fs.readdirSync(contractsDir).filter(file => file.endsWith('.json'));
+          const contractNames = contractFiles.map(file => {
+            const data = JSON.parse(fs.readFileSync(path.join(contractsDir, file), 'utf8'));
+            return data.name;
+          });
+          
+          let missingFiles = [];
+          let extraFiles = [];
+          
+          // Check for contracts in abis.json without files
+          Object.values(abis).forEach(contractInfo => {
+            if (!contractNames.includes(contractInfo.name)) {
+              missingFiles.push(contractInfo.name);
+            }
+          });
+          
+          // Check for files without abis.json entries
+          contractNames.forEach(contractName => {
+            if (!Object.values(abis).some(info => info.name === contractName)) {
+              extraFiles.push(contractName);
+            }
+          });
+          
+          if (missingFiles.length > 0) {
+            console.error('❌ Contracts in abis.json without files:', missingFiles);
+            process.exit(1);
+          }
+          
+          if (extraFiles.length > 0) {
+            console.error('❌ Files without abis.json entries:', extraFiles);
+            process.exit(1);
+          }
+          
+          console.log('✅ abis.json is consistent with files');
+          console.log('📊 abis.json contains', Object.keys(abis).length, 'contracts');
+        "
+        
+    - name: Check for duplicate addresses
+      run: |
+        echo "🔍 Checking for duplicate addresses..."
+        node -e "
+          const fs = require('fs');
+          const abis = JSON.parse(fs.readFileSync('abis.json', 'utf8'));
+          
+          const addresses = Object.keys(abis);
+          const duplicates = addresses.filter((address, index) => addresses.indexOf(address) !== index);
+          
+          if (duplicates.length > 0) {
+            console.error('❌ Duplicate addresses found:', duplicates);
+            process.exit(1);
+          }
+          
+          console.log('✅ No duplicate addresses found');
+        "
+        
+    - name: Validate address format
+      run: |
+        echo "📍 Validating address format..."
+        node -e "
+          const fs = require('fs');
+          const abis = JSON.parse(fs.readFileSync('abis.json', 'utf8'));
+          
+          const addresses = Object.keys(abis);
+          const invalidAddresses = addresses.filter(address => 
+            !/^0x[a-fA-F0-9]{40}$/.test(address)
+          );
+          
+          if (invalidAddresses.length > 0) {
+            console.error('❌ Invalid address format:', invalidAddresses);
+            process.exit(1);
+          }
+          
+          console.log('✅ All addresses have valid format');
+        "
+        
+    - name: Regenerate abis.json
+      run: |
+        echo "🔄 Regenerating abis.json with file references..."
+        python3 -c "
+        import json
+        import os
+        
+        # Create abis.json with file references from contracts directory
+        contracts_data = {}
+        
+        for filename in os.listdir('contracts'):
+            if filename.endswith('.json'):
+                filepath = os.path.join('contracts', filename)
+                with open(filepath, 'r') as f:
+                    contract_data = json.load(f)
+                    contract_name = contract_data.get('name')
+                    if contract_name:
+                        # Extract address from filename or use a placeholder
+                        # In a real scenario, you'd need to maintain address mapping
+                        # For now, we'll use the filename as a key
+                        key = filename.replace('.json', '')
+                        contracts_data[key] = {
+                            'name': contract_name,
+                            'file': f'contracts/{filename}'
+                        }
+        
+        # Write abis.json with file references
+        with open('abis.json', 'w') as f:
+            json.dump(contracts_data, f, indent=2)
+        
+        print(f'✅ Regenerated abis.json with {len(contracts_data)} contract references')
+        "
+        
+    - name: Summary
+      run: |
+        echo "🎉 ABI validation completed successfully!"
+        echo "📊 Repository structure is valid and ready for use"
+        echo "📄 abis.json has been regenerated for compatibility"
